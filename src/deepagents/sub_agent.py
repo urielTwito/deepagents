@@ -66,70 +66,88 @@ def _get_subagent_description(subagents):
 
 
 def _create_task_tool(
-    tools, instructions, subagents: list[SubAgent], model, state_schema, post_model_hook: Optional[Callable] = None
+        tools, instructions, subagents: list[SubAgent], model, state_schema, post_model_hook: Optional[Callable] = None
 ):
     agents = _get_agents(tools, instructions, subagents, model, state_schema, post_model_hook)
     other_agents_string = _get_subagent_description(subagents)
 
     @tool(
         description=TASK_DESCRIPTION_PREFIX.format(other_agents=other_agents_string)
-        + TASK_DESCRIPTION_SUFFIX
+                    + TASK_DESCRIPTION_SUFFIX
     )
     async def task(
-        description: str,
-        subagent_type: str,
-        state: Annotated[DeepAgentState, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId],
+            description: str,
+            subagent_type: str,
+            state: Annotated[state_schema, InjectedState],
+            tool_call_id: Annotated[str, InjectedToolCallId],
     ):
         if subagent_type not in agents:
             return f"Error: invoked agent of type {subagent_type}, the only allowed types are {[f'`{k}`' for k in agents]}"
         sub_agent = agents[subagent_type]
         state["messages"] = [{"role": "user", "content": description}]
         result = await sub_agent.ainvoke(state)
+        hardcoded = {
+            "files": result.get("files", {}),
+            "messages": [
+                ToolMessage(
+                    result["messages"][-1].content, tool_call_id=tool_call_id
+                )
+            ],
+        }
+
+        # dynamically copy everything except the hardcoded ones
+        dynamic = {
+            k: v for k, v in result.items()
+            if k not in ("files", "messages", "todos")
+        }
+
         return Command(
-            update={
-                "files": result.get("files", {}),
-                "messages": [
-                    ToolMessage(
-                        result["messages"][-1].content, tool_call_id=tool_call_id
-                    )
-                ],
-            }
+            update={**hardcoded, **dynamic}
         )
 
     return task
 
 
+
 def _create_sync_task_tool(
-    tools, instructions, subagents: list[SubAgent], model, state_schema, post_model_hook: Optional[Callable] = None
+        tools, instructions, subagents: list[SubAgent], model, state_schema, post_model_hook: Optional[Callable] = None
 ):
     agents = _get_agents(tools, instructions, subagents, model, state_schema, post_model_hook)
     other_agents_string = _get_subagent_description(subagents)
 
     @tool(
         description=TASK_DESCRIPTION_PREFIX.format(other_agents=other_agents_string)
-        + TASK_DESCRIPTION_SUFFIX
+                    + TASK_DESCRIPTION_SUFFIX
     )
     def task(
-        description: str,
-        subagent_type: str,
-        state: Annotated[DeepAgentState, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId],
+            description: str,
+            subagent_type: str,
+            state: Annotated[state_schema, InjectedState],
+            tool_call_id: Annotated[str, InjectedToolCallId],
     ):
         if subagent_type not in agents:
             return f"Error: invoked agent of type {subagent_type}, the only allowed types are {[f'`{k}`' for k in agents]}"
         sub_agent = agents[subagent_type]
         state["messages"] = [{"role": "user", "content": description}]
         result = sub_agent.invoke(state)
+
+        explicit_fields = {
+            "files": result.get("files", {}),
+            "messages": [
+                ToolMessage(
+                    result["messages"][-1].content, tool_call_id=tool_call_id
+                )
+            ],
+        }
+
+        # dynamically copy everything except the explicit_fields ones
+        additional_fields = {
+            k: v for k, v in result.items()
+            if k not in ("files", "messages", "todos")
+        }
+
         return Command(
-            update={
-                "files": result.get("files", {}),
-                "messages": [
-                    ToolMessage(
-                        result["messages"][-1].content, tool_call_id=tool_call_id
-                    )
-                ],
-            }
+            update={**explicit_fields, **additional_fields}
         )
 
     return task
